@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import google.generativeai as genai
 from openai import OpenAI
@@ -11,6 +12,13 @@ import datetime
 import base64
 import requests
 from PIL import Image
+
+# ─────────────────────────────────────────────
+# 從環境變數讀取 API Key（Render 環境變數設定）
+# 若環境變數不存在，則留空讓使用者手動輸入
+# ─────────────────────────────────────────────
+ENV_GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+ENV_OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # ─────────────────────────────────────────────
 # 基本設定
@@ -126,8 +134,20 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("⚙️ API 設定")
-    gemini_key = st.text_input("Gemini API Key", type="password", placeholder="AI-...")
-    openai_key = st.text_input("OpenAI API Key", type="password", placeholder="sk-...")
+
+    # 若環境變數已設定 Key，顯示已就緒提示，不需使用者輸入
+    if ENV_GEMINI_KEY:
+        st.success("✅ Gemini Key 已設定")
+        gemini_key = ENV_GEMINI_KEY
+    else:
+        gemini_key = st.text_input("Gemini API Key", type="password", placeholder="AI-...")
+
+    if ENV_OPENAI_KEY:
+        st.success("✅ OpenAI Key 已設定")
+        openai_key = ENV_OPENAI_KEY
+    else:
+        openai_key = st.text_input("OpenAI API Key", type="password", placeholder="sk-...")
+
     st.markdown("---")
 
     st.subheader("📚 閱讀設定")
@@ -356,11 +376,10 @@ if st.session_state.page == "generator":
         st.subheader("💡 使用提示")
         st.info(
             "**步驟說明**\n\n"
-            "1. 在左側填入側邊欄的 API 金鑰\n"
-            "2. 輸入主角、場景與主題\n"
-            "3. 點擊「開始生成」\n"
-            "4. 故事與插圖將同步呈現\n"
-            "5. 可匯出為 PDF 或前往家長儀表板查看統計"
+            "1. 輸入主角、場景與主題\n"
+            "2. 點擊「開始生成」\n"
+            "3. 故事與插圖將同步呈現\n"
+            "4. 可匯出為 PDF 或前往家長儀表板查看統計"
         )
         if st.session_state.history:
             st.success(f"📚 已累積 **{len(st.session_state.history)}** 篇故事紀錄")
