@@ -134,11 +134,15 @@ with st.sidebar:
     st.session_state.page = "generator" if nav == "✨ 故事生成器" else "dashboard"
 
     st.markdown("---")
-    st.subheader("📚 閱讀設定")
+    st.subheader("📚 視覺設定")
     difficulty = st.selectbox("閱讀年齡層", ["3-4 歲 (幼童)", "5-6 歲 (大班)", "7-8 歲 (初小)"])
     generate_images = st.toggle("🎨 生成故事插圖", value=True)
     num_illustrations = st.slider("插圖數量", 1, 4, 4)
-    auto_audio = st.toggle("🔊 自動生成語音朗讀", value=True)
+    
+    st.markdown("---")
+    st.subheader("🔊 語音設定")
+    auto_audio = st.toggle("自動生成語音朗讀", value=True)
+    audio_speed = st.selectbox("朗讀語速", ["標準", "慢速"])
 
 # ─────────────────────────────────────────────
 # 工具函式
@@ -167,14 +171,15 @@ def generate_image_with_pollinations(english_action: str, style: str) -> bytes |
     except: pass
     return None
 
-def generate_audio(text: str) -> bytes:
-    tts = gTTS(text=text, lang='zh-tw')
+def generate_audio(text: str, speed_setting: str) -> bytes:
+    is_slow = True if speed_setting == "慢速" else False
+    tts = gTTS(text=text, lang='zh-tw', slow=is_slow)
     fp = io.BytesIO()
     tts.write_to_fp(fp)
     fp.seek(0)
     return fp.read()
 
-# ⚠️ 更新為支援舊版 FPDF 的 TTF 字體來源
+# 下載供 PDF 使用的字體
 FONT_URL = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
 FONT_PATH = "NotoSansTC-Regular.ttf"
 FONT_NAME = "NotoSansTC"
@@ -192,20 +197,17 @@ def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes
     pdf = FPDF()
     pdf.add_page()
     try:
-        # 強制指定 uni=True 以支援 UTF-8 中文字元
         pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
         use_font = FONT_NAME
     except: 
         use_font = "Arial"
     
     pdf.set_font(use_font, size=22)
-    # 如果字體載入失敗退回 Arial，為了防止崩潰，移除標題的中文字
     safe_title = f"{character} 的專屬故事" if use_font != "Arial" else "Storybook"
     pdf.cell(0, 16, safe_title, ln=True, align="C")
     
     if image_bytes_list:
         try:
-            # 寫入暫存圖片供 PDF 讀取
             img_path = "temp_pdf_image.png"
             with open(img_path, "wb") as f: f.write(image_bytes_list[0])
             pdf.image(img_path, x=30, w=150)
@@ -215,7 +217,12 @@ def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes
     pdf.set_font(use_font, size=12)
     safe_text = text if use_font != "Arial" else "Font error: Could not load Chinese font. Please try again."
     pdf.multi_cell(0, 8, safe_text)
-    return bytes(pdf.output())
+    
+    # 解決 TypeError: string argument without an encoding
+    pdf_out = pdf.output(dest="S")
+    if isinstance(pdf_out, str):
+        return pdf_out.encode("latin-1")
+    return bytes(pdf_out)
 
 # ─────────────────────────────────────────────
 # 頁面：故事生成器
@@ -234,7 +241,7 @@ if st.session_state.page == "generator":
 
     with col_l:
         st.subheader("🎭 故事設定")
-        character = st.text_input("主角叫什麼名字？", placeholder="例如：小紅帽、大野狼…")
+        character = st.text_input("主角叫什麼名字？", placeholder="例如：小紅帽、大野狼、小鱷魚…")
         scene = st.text_input("故事在哪裡發生？", placeholder="例如：魔法森林、海底世界…")
         theme = st.selectbox("今天想聽什麼主題？", ["友情", "勇氣", "冒險", "親情", "分享", "探索"])
         generate_btn = st.button("✨ 開始生成專屬繪本", use_container_width=True, type="primary")
@@ -249,7 +256,6 @@ if st.session_state.page == "generator":
         else:
             with st.spinner("🔮 AI 正在為您創作故事與分鏡…"):
                 try:
-                    # 1. 生成主線故事
                     story_prompt = f"你是一位專為兒童寫作的繪本作家。請為「{difficulty}」的孩子創作一篇關於「{theme}」的故事。主角是「{character}」，故事發生在「{scene}」。請用生動有趣、符合該年齡層的詞彙，長度約 400 到 600 字。分成 4 到 6 個段落，不要加標題或編號。"
                     story_text = generate_story_with_groq(story_prompt)
                     st.session_state.story_text = story_text
@@ -268,13 +274,11 @@ if st.session_state.page == "generator":
                     st.error(f"故事生成失敗：{e}")
                     st.stop()
 
-            # 2. 處理圖片與分鏡
             st.session_state.image_bytes = []
             if generate_images:
                 paragraphs = st.session_state.story_paragraphs
                 scenes_to_illustrate = []
                 
-                # 確保精準選出使用者指定的圖片數量 (1~4 張)
                 if paragraphs:
                     for i in range(num_illustrations):
                         idx = int(i * len(paragraphs) / num_illustrations)
@@ -289,12 +293,14 @@ if st.session_state.page == "generator":
                     prog.progress((idx) / len(scenes_to_illustrate), text=f"🎨 正在繪製插圖 {idx+1}/{len(scenes_to_illustrate)}...")
                     
                     translation_prompt = (
-                        f"Extract the main visual action from the following Chinese story paragraph and describe it in a concise English image prompt (maximum 20 words). "
-                        f"The main character is '{character}'. The setting is '{scene}'. "
-                        f"Paragraph: {scene_paragraph}\n\nOutput ONLY the English description."
+                        f"Convert the main action of the following Chinese story paragraph into an English image generation prompt (max 30 words). "
+                        f"CRITICAL RULE: The main character is '{character}'. If the character is an animal, object, or fantasy creature, you MUST explicitly state this species for EVERY related character in the scene (e.g., explicitly write 'a mother crocodile' instead of just 'a mother', 'brother bear' instead of 'brother'). Do NOT generate human characters unless explicitly requested. "
+                        f"Setting: '{scene}'. "
+                        f"Paragraph: {scene_paragraph}\n\n"
+                        f"Output ONLY the English prompt."
                     )
                     try:
-                        english_action = generate_story_with_groq(translation_prompt, max_tokens=50)
+                        english_action = generate_story_with_groq(translation_prompt, max_tokens=60)
                     except:
                         english_action = f"The character {character} in {scene}"
                     
@@ -304,11 +310,10 @@ if st.session_state.page == "generator":
                         
                 prog.empty()
 
-            # 3. 全自動生成語音 (如果開關有打開)
             if auto_audio:
                 with st.spinner("🎙️ 正在錄製 AI 語音導讀…"):
                     try:
-                        st.session_state.audio_bytes = generate_audio(st.session_state.story_text)
+                        st.session_state.audio_bytes = generate_audio(st.session_state.story_text, audio_speed)
                     except Exception as e:
                         st.error(f"語音生成失敗：{e}")
 
@@ -316,9 +321,8 @@ if st.session_state.page == "generator":
         st.markdown("---")
         st.subheader("📚 你的專屬繪本")
 
-        # 顯示語音播放器
         if st.session_state.audio_bytes:
-            st.success("🎵 語音導讀已為您準備好！")
+            st.success(f"🎵 語音導讀已為您準備好！(目前語速：{audio_speed})")
             st.audio(st.session_state.audio_bytes, format="audio/mp3", autoplay=True)
 
         meta = st.session_state.current_meta
@@ -335,7 +339,6 @@ if st.session_state.page == "generator":
         image_bytes_list = st.session_state.image_bytes
         img_idx = 0
 
-        # 將生成的圖片均勻分配到段落中顯示
         img_spacing = max(1, len(paragraphs) // max(1, len(image_bytes_list))) if image_bytes_list else 1
 
         for i, para in enumerate(paragraphs):
@@ -348,7 +351,6 @@ if st.session_state.page == "generator":
                 img_idx += 1
             st.markdown(f'<div class="story-card">{para}</div>', unsafe_allow_html=True)
 
-        # 把剩餘圖片貼到最後面
         while img_idx < len(image_bytes_list):
             img_b64 = base64.b64encode(image_bytes_list[img_idx]).decode()
             st.markdown(
