@@ -10,7 +10,6 @@ import datetime
 import base64
 import requests
 from PIL import Image
-from huggingface_hub import InferenceClient
 
 # ─────────────────────────────────────────────
 # 從環境變數讀取 API Key（Render 環境變數設定）
@@ -211,31 +210,37 @@ def generate_story_with_groq(groq_key: str, prompt: str) -> str:
 
 
 def generate_hf_image(hf_key: str, scene_desc: str, character: str, scene: str) -> bytes | None:
-    """呼叫 Hugging Face InferenceClient 生成插圖，回傳圖片 bytes"""
-    client = InferenceClient(token=hf_key)
+    """呼叫 Hugging Face Stable Diffusion 生成插圖，回傳圖片 bytes"""
     prompt = (
         f"A charming children\'s picture book illustration in a soft watercolor style. "
         f"Scene: {scene_desc[:200]}. "
         f"The main character is \'{character}\", set in \'{scene}\". "
         f"Bright friendly colors, no text, child-safe, storybook aesthetic."
     )
+    headers = {"Authorization": f"Bearer {hf_key}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {"width": 768, "height": 768, "num_inference_steps": 4, "guidance_scale": 0.0},
+        "options": {"wait_for_model": True} # 等待模型載入
+    }
     try:
-        # Using InferenceClient.text_to_image
-        image = client.text_to_image(
-            prompt,
-            model=HF_IMAGE_MODEL,
-            width=768,
-            height=768,
-            num_inference_steps=4,
-            guidance_scale=0.0, # FLUX models often work best with 0.0 guidance scale
-        )
-        # Convert PIL Image to bytes
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format="PNG")
-        return img_byte_arr.getvalue()
+        resp = requests.post(HF_IMAGE_API, headers=headers, json=payload, timeout=120)
+        if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image"):
+            return resp.content
+        elif resp.status_code == 503:
+            st.warning("⏳ Hugging Face 模型載入中，請稍後再試（約 20-30 秒）。")
+        elif resp.status_code == 401:
+            st.warning("❌ Hugging Face API Token 無效或未提供。請檢查您的 Token。")
+        elif resp.status_code == 404:
+            st.warning(f"❌ Hugging Face 模型 {HF_IMAGE_MODEL} 未找到。請確認模型名稱或路徑。")
+        else:
+            st.warning(f"插圖生成失敗（HTTP {resp.status_code}）：{resp.text[:200]}")
+        return None
+    except requests.exceptions.Timeout:
+        st.warning("⏳ Hugging Face API 請求超時。請稍後再試。")
+        return None
     except Exception as e:
         st.warning(f"插圖生成失敗：{e}")
-        st.warning(f"請檢查 Hugging Face API Token 是否正確，或模型 {HF_IMAGE_MODEL} 是否支援 text_to_image 任務。")
         return None
 
 
