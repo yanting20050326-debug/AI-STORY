@@ -212,9 +212,9 @@ def generate_story_with_groq(groq_key: str, prompt: str) -> str:
 def generate_image_with_pollinations(scene_desc: str, character: str, scene: str) -> bytes | None:
     """呼叫 Hugging Face Stable Diffusion 生成插圖，回傳圖片 bytes"""
     prompt = (
-        f"A charming children\\'s picture book illustration in a soft watercolor style. "
+        f"A charming children's picture book illustration in a soft watercolor style. "
         f"Scene: {scene_desc[:200]}. "
-        f"The main character is \'{character}\' set in \'{scene}\'". "
+        f"The main character is '{character}' set in '{scene}'. "
         f"Bright friendly colors, no text, child-safe, storybook aesthetic."
     )
     # Pollinations.ai 直接將 prompt 放入 URL
@@ -433,11 +433,8 @@ if st.session_state.page == "generator":
     with col_r:
         st.subheader("💡 使用提示")
         st.info(
-            "**步驟說明**\n\n"
-            "1. 輸入主角、場景與主題\n"
-            "2. 點擊「開始生成」\n"
-            "3. 故事與插圖將同步呈現\n"
-            "4. 可匯出為 PDF 或前往家長儀表板查看統計"
+            "輸入主角、場景與主題後，點擊「開始生成」，故事與插圖將同步呈現！\n\n"
+            "完成後可匯出為 PDF 或前往家長儀表板查看統計。"
         )
         if st.session_state.history:
             st.success(f"📚 已累積 **{len(st.session_state.history)}** 篇故事紀錄")
@@ -574,97 +571,3 @@ elif st.session_state.page == "dashboard":
 
     if not history:
         st.info("還沒有閱讀紀錄！請先到「故事生成器」生成幾篇故事。")
-        st.stop()
-
-    # ── 統計數字 ──
-    total = len(history)
-    themes_used = len({h["theme"] for h in history})
-    chars_used = len({h["character"] for h in history})
-    latest_date = history[-1]["date"] if history else "—"
-
-    c1, c2, c3, c4 = st.columns(4)
-    for col, num, label in zip(
-        [c1, c2, c3, c4],
-        [total, themes_used, chars_used, latest_date],
-        ["📚 總故事篇數", "💡 主題種類", "👤 不同主角", "🕐 最近閱讀"],
-    ):
-        col.markdown(
-            f'<div class="metric-box">'
-            f'<div class="metric-num">{num}</div>'
-            f'<div class="metric-label">{label}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("---")
-
-    # ── 圖表區 ──
-    chart_col1, chart_col2 = st.columns(2)
-
-    with chart_col1:
-        st.subheader("📊 主題分佈")
-        chart_bytes = theme_chart(history)
-        if chart_bytes:
-            st.image(chart_bytes, use_container_width=True)
-
-    with chart_col2:
-        st.subheader("📅 每月閱讀篇數")
-        monthly_bytes = monthly_chart(history)
-        if monthly_bytes:
-            st.image(monthly_bytes, use_container_width=True)
-        else:
-            st.info("需要多個月份的紀錄才能顯示此圖表。")
-
-    st.markdown("---")
-
-    # ── 閱讀紀錄列表 ──
-    st.subheader("📋 閱讀紀錄")
-
-    # 篩選器
-    filter_col1, filter_col2 = st.columns(2)
-    with filter_col1:
-        all_themes = sorted({h["theme"] for h in history})
-        selected_theme = st.selectbox("篩選主題", ["全部"] + all_themes)
-    with filter_col2:
-        sort_order = st.radio("排序", ["最新優先", "最舊優先"], horizontal=True)
-
-    filtered = history if selected_theme == "全部" else [h for h in history if h["theme"] == selected_theme]
-    if sort_order == "最新優先":
-        filtered = list(reversed(filtered))
-
-    for i, item in enumerate(filtered):
-        with st.expander(
-            f"📖 {item['character']} 在「{item['scene']}」的故事  ｜  {item['theme']}  ｜  {item['date']}"
-        ):
-            st.markdown(
-                f'<span class="badge">📅 {item["date"]}</span>'
-                f'<span class="badge">💡 {item["theme"]}</span>'
-                f'<span class="badge">🎓 {item["difficulty"]}</span>',
-                unsafe_allow_html=True,
-            )
-            st.markdown("")
-            st.markdown(f'<div class="story-card">{item["text"]}</div>', unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # ── 匯出報告 ──
-    st.subheader("📄 匯出完整閱讀報告")
-    report_pdf = create_pdf_report(history)
-    st.download_button(
-        "⬇️ 下載 PDF 學習報告",
-        data=report_pdf,
-        file_name=f"閱讀報告_{datetime.datetime.now().strftime('%Y%m%d')}.pdf",
-        mime="application/pdf",
-        use_container_width=False,
-    )
-
-    # ── 清除紀錄 ──
-    st.markdown("---")
-    if st.button("🗑️ 清除所有閱讀紀錄", type="secondary"):
-        st.session_state.history = []
-        st.session_state.story_text = ""
-        st.session_state.story_paragraphs = []
-        st.session_state.image_urls = []
-        st.session_state.image_bytes = []
-        st.success("已清除所有紀錄。")
-        st.rerun()
