@@ -214,7 +214,7 @@ def generate_image_with_pollinations(scene_desc: str, character: str, scene: str
     prompt = (
         f"A charming children\\'s picture book illustration in a soft watercolor style. "
         f"Scene: {scene_desc[:200]}. "
-        f"The main character is \'{character}\'", set in \'{scene}\'". "
+        f"The main character is \'{character}\' set in \'{scene}\'". "
         f"Bright friendly colors, no text, child-safe, storybook aesthetic."
     )
     # Pollinations.ai 直接將 prompt 放入 URL
