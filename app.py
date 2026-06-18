@@ -1,7 +1,6 @@
 import os
 import streamlit as st
 import google.generativeai as genai
-from openai import OpenAI
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 import matplotlib
@@ -18,7 +17,10 @@ from PIL import Image
 # 若環境變數不存在，則留空讓使用者手動輸入
 # ─────────────────────────────────────────────
 ENV_GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
-ENV_OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+ENV_HF_KEY     = os.environ.get("HUGGINGFACE_API_KEY", "")
+
+# Hugging Face 免費圖片生成模型
+HF_IMAGE_API = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
 
 # ─────────────────────────────────────────────
 # 基本設定
@@ -107,6 +109,7 @@ defaults = {
     "story_text": "",
     "story_paragraphs": [],
     "image_urls": [],
+    "image_bytes": [],
     "history": [],          # [{date, character, scene, theme, difficulty, text}]
     "current_meta": {},
     "page": "generator",    # generator | dashboard
@@ -142,11 +145,11 @@ with st.sidebar:
     else:
         gemini_key = st.text_input("Gemini API Key", type="password", placeholder="AI-...")
 
-    if ENV_OPENAI_KEY:
-        st.success("✅ OpenAI Key 已設定")
-        openai_key = ENV_OPENAI_KEY
+    if ENV_HF_KEY:
+        st.success("✅ Hugging Face Key 已設定")
+        hf_key = ENV_HF_KEY
     else:
-        openai_key = st.text_input("OpenAI API Key", type="password", placeholder="sk-...")
+        hf_key = st.text_input("Hugging Face API Token", type="password", placeholder="hf_...")
 
     st.markdown("---")
 
@@ -155,7 +158,7 @@ with st.sidebar:
         "閱讀年齡層",
         ["3-4 歲 (幼童)", "5-6 歲 (大班)", "7-8 歲 (初小)"],
     )
-    generate_images = st.toggle("🎨 生成故事插圖 (需 OpenAI Key)", value=True)
+    generate_images = st.toggle("🎨 生成故事插圖 (Hugging Face 免費)", value=True)
     num_illustrations = st.slider("插圖數量", 1, 4, 2)
 
     st.markdown("---")
@@ -179,23 +182,28 @@ def split_into_paragraphs(text: str, n: int) -> list[str]:
     return chunks[:n]
 
 
-def generate_dalle_image(openai_client: OpenAI, scene_desc: str, character: str, scene: str) -> str | None:
-    """呼叫 DALL-E 3 生成插圖，回傳圖片 URL"""
+def generate_hf_image(hf_key: str, scene_desc: str, character: str, scene: str) -> bytes | None:
+    """呼叫 Hugging Face Stable Diffusion 生成插圖，回傳圖片 bytes"""
     prompt = (
         f"A charming children's picture book illustration in a soft watercolor style. "
         f"Scene: {scene_desc[:200]}. "
         f"The main character is '{character}', set in '{scene}'. "
-        f"Bright, friendly colors, no text, child-safe, storybook aesthetic."
+        f"Bright friendly colors, no text, child-safe, storybook aesthetic."
     )
+    headers = {"Authorization": f"Bearer {hf_key}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {"width": 768, "height": 768, "num_inference_steps": 30},
+    }
     try:
-        resp = openai_client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
-        return resp.data[0].url
+        resp = requests.post(HF_IMAGE_API, headers=headers, json=payload, timeout=120)
+        if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image"):
+            return resp.content
+        elif resp.status_code == 503:
+            st.warning("⏳ 模型載入中，請稍後再試（約 20-30 秒）")
+        else:
+            st.warning(f"插圖生成失敗（{resp.status_code}）：{resp.text[:200]}")
+        return None
     except Exception as e:
         st.warning(f"插圖生成失敗：{e}")
         return None
@@ -243,7 +251,7 @@ def create_pdf_report(history: list) -> bytes:
     return bytes(pdf.output())
 
 
-def create_story_pdf(text: str, character: str, image_urls: list) -> bytes:
+def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes:
     """匯出單篇故事 PDF（含插圖）"""
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -259,16 +267,16 @@ def create_story_pdf(text: str, character: str, image_urls: list) -> bytes:
     pdf.cell(0, 16, f"{character} 的專屬故事", ln=True, align="C")
     pdf.ln(4)
 
-    # 嵌入第一張插圖（若有）
-    if image_urls:
-        b64 = url_to_base64(image_urls[0])
-        if b64:
-            img_bytes = base64.b64decode(b64)
-            img_path = "/tmp/story_img_0.jpg"
+    # 嵌入第一張插圖（若有，直接用 bytes）
+    if image_bytes_list:
+        try:
+            img_path = "/tmp/story_img_0.png"
             with open(img_path, "wb") as f:
-                f.write(img_bytes)
+                f.write(image_bytes_list[0])
             pdf.image(img_path, x=30, w=150)
             pdf.ln(4)
+        except Exception:
+            pass
 
     pdf.set_font(use_font, size=12)
     pdf.multi_cell(0, 8, text)
@@ -427,26 +435,25 @@ if st.session_state.page == "generator":
                     st.error(f"故事生成失敗：{e}")
                     st.stop()
 
-            # 生成插圖
-            st.session_state.image_urls = []
-            if generate_images and openai_key:
-                paragraphs = st.session_state.story_paragraphs
+            # 生成插圖（Hugging Face 免費）
+            st.session_state.image_urls = []   # 改存 bytes
+            st.session_state.image_bytes = []
+            if generate_images and hf_key:
                 scenes_to_illustrate = split_into_paragraphs(
                     st.session_state.story_text, num_illustrations
                 )
-                openai_client = OpenAI(api_key=openai_key)
-                prog = st.progress(0, text="🎨 正在生成插圖…")
+                prog = st.progress(0, text="🎨 正在生成插圖（免費模型，需約 30 秒）…")
                 for idx, scene_desc in enumerate(scenes_to_illustrate):
-                    img_url = generate_dalle_image(openai_client, scene_desc, character, scene)
-                    if img_url:
-                        st.session_state.image_urls.append(img_url)
+                    img_data = generate_hf_image(hf_key, scene_desc, character, scene)
+                    if img_data:
+                        st.session_state.image_bytes.append(img_data)
                     prog.progress(
                         (idx + 1) / len(scenes_to_illustrate),
                         text=f"🎨 插圖 {idx+1}/{len(scenes_to_illustrate)} 完成",
                     )
                 prog.empty()
-            elif generate_images and not openai_key:
-                st.warning("要生成插圖需要在左側欄填入 OpenAI API Key 喔！")
+            elif generate_images and not hf_key:
+                st.warning("要生成插圖請在左側欄填入 Hugging Face API Token！")
 
     # 顯示故事結果
     if st.session_state.story_text:
@@ -465,19 +472,19 @@ if st.session_state.page == "generator":
         st.markdown("")
 
         paragraphs = st.session_state.story_paragraphs
-        image_urls = st.session_state.image_urls
+        image_bytes_list = st.session_state.image_bytes
         img_idx = 0
 
         for i, para in enumerate(paragraphs):
             # 每隔幾段插入一張圖
-            if image_urls and img_idx < len(image_urls) and i % max(1, len(paragraphs) // len(image_urls)) == 0:
-                st.image(image_urls[img_idx], use_container_width=True)
+            if image_bytes_list and img_idx < len(image_bytes_list) and i % max(1, len(paragraphs) // len(image_bytes_list)) == 0:
+                st.image(image_bytes_list[img_idx], use_container_width=True)
                 img_idx += 1
             st.markdown(f'<div class="story-card">{para}</div>', unsafe_allow_html=True)
 
         # 若還有剩餘圖片放在最後
-        while img_idx < len(image_urls):
-            st.image(image_urls[img_idx], use_container_width=True)
+        while img_idx < len(image_bytes_list):
+            st.image(image_bytes_list[img_idx], use_container_width=True)
             img_idx += 1
 
         st.markdown("---")
@@ -488,7 +495,7 @@ if st.session_state.page == "generator":
             story_pdf = create_story_pdf(
                 st.session_state.story_text,
                 meta.get("character", "故事"),
-                st.session_state.image_urls,
+                st.session_state.image_bytes,
             )
             st.download_button(
                 "🖨️ 匯出故事 PDF",
@@ -504,6 +511,7 @@ if st.session_state.page == "generator":
                 st.session_state.story_text = ""
                 st.session_state.story_paragraphs = []
                 st.session_state.image_urls = []
+                st.session_state.image_bytes = []
                 st.rerun()
 
 
@@ -611,5 +619,6 @@ elif st.session_state.page == "dashboard":
         st.session_state.story_text = ""
         st.session_state.story_paragraphs = []
         st.session_state.image_urls = []
+        st.session_state.image_bytes = []
         st.success("已清除所有紀錄。")
         st.rerun()
