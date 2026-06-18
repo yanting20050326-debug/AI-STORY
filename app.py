@@ -23,7 +23,12 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"  # 也可改成 llama-3.1-8b-instant 等其他 Groq 模型
 
 # Hugging Face 免費圖片生成模型
-HF_IMAGE_API = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+# 注意：舊版 api-inference.huggingface.co 已於 2025 年下半年正式停用（回傳 410 / DNS 無法解析），
+# 新版統一改用 router.huggingface.co 的 Inference Providers 介面。
+# stable-diffusion-xl-base-1.0 在新版 hf-inference 供應商上已不再提供（該供應商現在主要服務 CPU 推論的小模型），
+# 改用目前仍在 hf-inference 上可用、速度快的 FLUX.1-schnell。
+HF_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
+HF_IMAGE_API = f"https://router.huggingface.co/hf-inference/models/{HF_IMAGE_MODEL}"
 
 # ─────────────────────────────────────────────
 # 基本設定
@@ -215,7 +220,7 @@ def generate_hf_image(hf_key: str, scene_desc: str, character: str, scene: str) 
     headers = {"Authorization": f"Bearer {hf_key}"}
     payload = {
         "inputs": prompt,
-        "parameters": {"width": 768, "height": 768, "num_inference_steps": 30},
+        "parameters": {"width": 768, "height": 768, "num_inference_steps": 4},
     }
     try:
         resp = requests.post(HF_IMAGE_API, headers=headers, json=payload, timeout=120)
