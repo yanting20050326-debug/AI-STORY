@@ -402,7 +402,7 @@ if st.session_state.page == "generator":
             with st.spinner("🔮 AI 正在為您創作故事…"):
                 try:
                     genai.configure(api_key=gemini_key)
-                    model = genai.GenerativeModel("gemini-2.0-flash")
+                    model = genai.GenerativeModel("gemini-2.0-flash-lite")
 
                     prompt = f"""
 你是一位專為兒童寫作的繪本作家。
