@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 import matplotlib
@@ -142,7 +143,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🔊 語音設定")
     auto_audio = st.toggle("自動生成語音朗讀", value=True)
-    audio_speed = st.selectbox("朗讀語速", ["標準", "慢速"])
+    audio_speed = st.selectbox("朗讀語速", [1.0, 1.25, 1.5], index=0)
 
 # ─────────────────────────────────────────────
 # 工具函式
@@ -171,35 +172,48 @@ def generate_image_with_pollinations(english_action: str, style: str) -> bytes |
     except: pass
     return None
 
-def generate_audio(text: str, speed_setting: str) -> bytes:
-    is_slow = True if speed_setting == "慢速" else False
-    tts = gTTS(text=text, lang='zh-tw', slow=is_slow)
+def generate_audio(text: str) -> bytes:
+    # 產生原始語音 (速度會在前端 HTML 控制器中調整)
+    tts = gTTS(text=text, lang='zh-tw', slow=False)
     fp = io.BytesIO()
     tts.write_to_fp(fp)
     fp.seek(0)
     return fp.read()
 
-# 下載供 PDF 使用的字體
-FONT_URL = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
-FONT_PATH = "NotoSansTC-Regular.ttf"
+# 強化版字體下載機制 (確保檔案完整)
+FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
+FONT_PATH = os.path.join(os.getcwd(), "NotoSansTC-Regular.ttf")
 FONT_NAME = "NotoSansTC"
 
 @st.cache_resource
 def download_font():
-    if not os.path.exists(FONT_PATH):
+    # 檢查字體是否存在且大於 1MB (確保沒下載到壞檔)
+    if not os.path.exists(FONT_PATH) or os.path.getsize(FONT_PATH) < 1000000:
         try:
+            r = requests.get(FONT_URL, stream=True, timeout=30)
+            r.raise_for_status()
             with open(FONT_PATH, "wb") as f:
-                f.write(requests.get(FONT_URL, timeout=30).content)
-        except: pass
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        except Exception as e:
+            st.error(f"⚠️ 字體下載失敗，PDF 中文可能無法正常顯示: {e}")
 download_font()
 
 def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes:
     pdf = FPDF()
     pdf.add_page()
+    
+    # 相容新舊版 fpdf 的安全字體載入機制
     try:
-        pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
+        try:
+            # 優先嘗試新版 fpdf2 寫法
+            pdf.add_font(FONT_NAME, fname=FONT_PATH)
+        except TypeError:
+            # 退回舊版 fpdf1 寫法
+            pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
         use_font = FONT_NAME
-    except: 
+    except Exception as e:
+        st.warning(f"字體載入發生異常，使用預設字體 ({e})")
         use_font = "Arial"
     
     pdf.set_font(use_font, size=22)
@@ -208,21 +222,23 @@ def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes
     
     if image_bytes_list:
         try:
-            img_path = "temp_pdf_image.png"
+            img_path = os.path.join(os.getcwd(), "temp_pdf_image.png")
             with open(img_path, "wb") as f: f.write(image_bytes_list[0])
             pdf.image(img_path, x=30, w=150)
             pdf.ln(4)
         except: pass
         
     pdf.set_font(use_font, size=12)
-    safe_text = text if use_font != "Arial" else "Font error: Could not load Chinese font. Please try again."
+    safe_text = text if use_font != "Arial" else "Warning: Could not render Chinese text in PDF. Please check server font files."
     pdf.multi_cell(0, 8, safe_text)
     
-    # 解決 TypeError: string argument without an encoding
-    pdf_out = pdf.output(dest="S")
-    if isinstance(pdf_out, str):
-        return pdf_out.encode("latin-1")
-    return bytes(pdf_out)
+    # 相容新舊版 fpdf 的二進位輸出機制
+    try:
+        res = pdf.output()
+        return bytes(res) if type(res) in (bytes, bytearray) else res.encode('latin-1')
+    except TypeError:
+        res = pdf.output(dest="S")
+        return res.encode('latin-1') if isinstance(res, str) else bytes(res)
 
 # ─────────────────────────────────────────────
 # 頁面：故事生成器
@@ -313,7 +329,7 @@ if st.session_state.page == "generator":
             if auto_audio:
                 with st.spinner("🎙️ 正在錄製 AI 語音導讀…"):
                     try:
-                        st.session_state.audio_bytes = generate_audio(st.session_state.story_text, audio_speed)
+                        st.session_state.audio_bytes = generate_audio(st.session_state.story_text)
                     except Exception as e:
                         st.error(f"語音生成失敗：{e}")
 
@@ -321,9 +337,20 @@ if st.session_state.page == "generator":
         st.markdown("---")
         st.subheader("📚 你的專屬繪本")
 
+        # 使用自訂 HTML 與 JavaScript 完美控制播放語速
         if st.session_state.audio_bytes:
-            st.success(f"🎵 語音導讀已為您準備好！(目前語速：{audio_speed})")
-            st.audio(st.session_state.audio_bytes, format="audio/mp3", autoplay=True)
+            st.success(f"🎵 語音導讀已為您準備好！(語速：{audio_speed}x)")
+            b64_audio = base64.b64encode(st.session_state.audio_bytes).decode()
+            audio_html = f"""
+                <audio id="storyAudio" controls autoplay style="width: 100%; height: 50px; border-radius: 8px; outline: none;">
+                    <source src="data:audio/mp3;base64,{b64_audio}" type="audio/mp3">
+                </audio>
+                <script>
+                    var audio = document.getElementById("storyAudio");
+                    audio.playbackRate = {audio_speed};
+                </script>
+            """
+            components.html(audio_html, height=70)
 
         meta = st.session_state.current_meta
         if meta:
