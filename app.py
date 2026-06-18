@@ -173,48 +173,38 @@ def generate_image_with_pollinations(english_action: str, style: str) -> bytes |
     return None
 
 def generate_audio(text: str) -> bytes:
-    # 產生原始語音 (速度會在前端 HTML 控制器中調整)
     tts = gTTS(text=text, lang='zh-tw', slow=False)
     fp = io.BytesIO()
     tts.write_to_fp(fp)
     fp.seek(0)
     return fp.read()
 
-# 強化版字體下載機制 (確保檔案完整)
-FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
-FONT_PATH = os.path.join(os.getcwd(), "NotoSansTC-Regular.ttf")
+# ==========================================
+# 🛑 終極版字體設定 (完全拔除網路下載)
+# ==========================================
+# 使用 os.path 確保指向 app.py 所在的同一個資料夾
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FONT_PATH = os.path.join(BASE_DIR, "NotoSansTC-VariableFont_wght.ttf")
 FONT_NAME = "NotoSansTC"
-
-@st.cache_resource
-def download_font():
-    # 檢查字體是否存在且大於 1MB (確保沒下載到壞檔)
-    if not os.path.exists(FONT_PATH) or os.path.getsize(FONT_PATH) < 1000000:
-        try:
-            r = requests.get(FONT_URL, stream=True, timeout=30)
-            r.raise_for_status()
-            with open(FONT_PATH, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        except Exception as e:
-            st.error(f"⚠️ 字體下載失敗，PDF 中文可能無法正常顯示: {e}")
-download_font()
 
 def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes:
     pdf = FPDF()
     pdf.add_page()
     
-    # 相容新舊版 fpdf 的安全字體載入機制
-    try:
-        try:
-            # 優先嘗試新版 fpdf2 寫法
-            pdf.add_font(FONT_NAME, fname=FONT_PATH)
-        except TypeError:
-            # 退回舊版 fpdf1 寫法
-            pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
-        use_font = FONT_NAME
-    except Exception as e:
-        st.warning(f"字體載入發生異常，使用預設字體 ({e})")
+    # 檢查你的字體檔案有沒有確實被放進來
+    if not os.path.exists(FONT_PATH):
+        st.error(f"❌ 找不到字體檔案：{FONT_PATH}。請確認你有把 `NotoSansTC-VariableFont_wght.ttf` 跟 app.py 放在一起並推送到 GitHub！")
         use_font = "Arial"
+    else:
+        try:
+            try:
+                pdf.add_font(FONT_NAME, fname=FONT_PATH)
+            except TypeError:
+                pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
+            use_font = FONT_NAME
+        except Exception as e:
+            st.error(f"❌ 字體解析失敗 (可能是舊版 fpdf 不支援 Variable Font): {e}")
+            use_font = "Arial"
     
     pdf.set_font(use_font, size=22)
     safe_title = f"{character} 的專屬故事" if use_font != "Arial" else "Storybook"
@@ -222,17 +212,16 @@ def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes
     
     if image_bytes_list:
         try:
-            img_path = os.path.join(os.getcwd(), "temp_pdf_image.png")
+            img_path = os.path.join(BASE_DIR, "temp_pdf_image.png")
             with open(img_path, "wb") as f: f.write(image_bytes_list[0])
             pdf.image(img_path, x=30, w=150)
             pdf.ln(4)
         except: pass
         
     pdf.set_font(use_font, size=12)
-    safe_text = text if use_font != "Arial" else "Warning: Could not render Chinese text in PDF. Please check server font files."
+    safe_text = text if use_font != "Arial" else "Error: Please upload the NotoSansTC-VariableFont_wght.ttf file to your GitHub repository."
     pdf.multi_cell(0, 8, safe_text)
     
-    # 相容新舊版 fpdf 的二進位輸出機制
     try:
         res = pdf.output()
         return bytes(res) if type(res) in (bytes, bytearray) else res.encode('latin-1')
@@ -337,7 +326,6 @@ if st.session_state.page == "generator":
         st.markdown("---")
         st.subheader("📚 你的專屬繪本")
 
-        # 使用自訂 HTML 與 JavaScript 完美控制播放語速
         if st.session_state.audio_bytes:
             st.success(f"🎵 語音導讀已為您準備好！(語速：{audio_speed}x)")
             b64_audio = base64.b64encode(st.session_state.audio_bytes).decode()
