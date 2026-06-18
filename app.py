@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-import google.generativeai as genai
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 import matplotlib
@@ -16,8 +15,12 @@ from PIL import Image
 # 從環境變數讀取 API Key（Render 環境變數設定）
 # 若環境變數不存在，則留空讓使用者手動輸入
 # ─────────────────────────────────────────────
-ENV_GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
-ENV_HF_KEY     = os.environ.get("HUGGINGFACE_API_KEY", "")
+ENV_GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+ENV_HF_KEY   = os.environ.get("HUGGINGFACE_API_KEY", "")
+
+# Groq Chat Completions API（OpenAI 相容介面）
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"  # 也可改成 llama-3.1-8b-instant 等其他 Groq 模型
 
 # Hugging Face 免費圖片生成模型
 HF_IMAGE_API = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
@@ -139,11 +142,11 @@ with st.sidebar:
     st.subheader("⚙️ API 設定")
 
     # 若環境變數已設定 Key，顯示已就緒提示，不需使用者輸入
-    if ENV_GEMINI_KEY:
-        st.success("✅ Gemini Key 已設定")
-        gemini_key = ENV_GEMINI_KEY
+    if ENV_GROQ_KEY:
+        st.success("✅ Groq Key 已設定")
+        groq_key = ENV_GROQ_KEY
     else:
-        gemini_key = st.text_input("Gemini API Key", type="password", placeholder="AI-...")
+        groq_key = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
 
     if ENV_HF_KEY:
         st.success("✅ Hugging Face Key 已設定")
@@ -180,6 +183,25 @@ def split_into_paragraphs(text: str, n: int) -> list[str]:
         if chunk:
             chunks.append(chunk)
     return chunks[:n]
+
+
+def generate_story_with_groq(groq_key: str, prompt: str) -> str:
+    """呼叫 Groq Chat Completions API（OpenAI 相容格式）生成故事文字"""
+    headers = {
+        "Authorization": f"Bearer {groq_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.9,
+        "max_tokens": 1024,
+    }
+    resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Groq API 錯誤（{resp.status_code}）：{resp.text[:300]}")
+    data = resp.json()
+    return data["choices"][0]["message"]["content"].strip()
 
 
 def generate_hf_image(hf_key: str, scene_desc: str, character: str, scene: str) -> bytes | None:
@@ -394,16 +416,13 @@ if st.session_state.page == "generator":
 
     # 生成邏輯
     if generate_btn:
-        if not gemini_key:
-            st.error("請先在左側邊欄輸入 Gemini API Key！")
+        if not groq_key:
+            st.error("請先在左側邊欄輸入 Groq API Key！")
         elif not character or not scene:
             st.warning("請填寫主角與場景，才能生成完整的故事喔！")
         else:
             with st.spinner("🔮 AI 正在為您創作故事…"):
                 try:
-                    genai.configure(api_key=gemini_key)
-                    model = genai.GenerativeModel("gemini-2.0-flash-lite")
-
                     prompt = f"""
 你是一位專為兒童寫作的繪本作家。
 請為「{difficulty}」的孩子創作一篇關於「{theme}」的故事。
@@ -412,8 +431,7 @@ if st.session_state.page == "generator":
 故事須分成 4 個段落（每段以空白行分隔），並帶有正向教育意義的結尾。
 只輸出故事內容本身，不要加標題或編號。
 """
-                    response = model.generate_content(prompt)
-                    story_text = response.text.strip()
+                    story_text = generate_story_with_groq(groq_key, prompt)
                     st.session_state.story_text = story_text
                     st.session_state.story_paragraphs = [
                         p.strip() for p in story_text.split("\n\n") if p.strip()
