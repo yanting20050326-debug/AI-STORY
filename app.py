@@ -3,7 +3,7 @@ import streamlit as st
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.rcParams['font.family'] = ['DejaVu Sans', 'sans-serif']
+matplotlib.rcParams["font.family"] = ["DejaVu Sans", "sans-serif"]
 import io
 import json
 import datetime
@@ -16,7 +16,7 @@ from PIL import Image
 # 若環境變數不存在，則留空讓使用者手動輸入
 # ─────────────────────────────────────────────
 ENV_GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
-ENV_HF_KEY   = os.environ.get("HUGGINGFACE_API_KEY", "")
+ENV_HF_KEY = os.environ.get("HUGGINGFACE_API_KEY", "")
 
 # Groq Chat Completions API（OpenAI 相容介面）
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -28,7 +28,7 @@ GROQ_MODEL = "llama-3.3-70b-versatile"  # 也可改成 llama-3.1-8b-instant 等�
 # stable-diffusion-xl-base-1.0 在新版 hf-inference 供應商上已不再提供（該供應商現在主要服務 CPU 推論的小模型），
 # 改用目前仍在 hf-inference 上可用、速度快的 FLUX.1-schnell。
 HF_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
-HF_IMAGE_API = f"https://api-inference.huggingface.co/models/{HF_IMAGE_MODEL}" # Changed to direct inference API for testing
+HF_IMAGE_API = f"https://router.huggingface.co/hf-inference/models/{HF_IMAGE_MODEL}" # Reverted to router.huggingface.co
 
 # ─────────────────────────────────────────────
 # 基本設定
@@ -244,6 +244,28 @@ def url_to_base64(url: str) -> str | None:
     except Exception:
         return None
 
+# ─────────────────────────────────────────────
+# 字體下載與設定
+# ─────────────────────────────────────────────
+FONT_URL = "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf"
+FONT_PATH = "NotoSansCJKtc-Regular.otf"
+FONT_NAME = "NotoSansTC"
+
+@st.cache_resource
+def download_font():
+    """下載中文字體檔案（如果不存在的話）"""
+    if not os.path.exists(FONT_PATH):
+        try:
+            with st.spinner("正在下載中文字體以支援 PDF 匯出，請稍候..."):
+                response = requests.get(FONT_URL, timeout=30)
+                response.raise_for_status()
+                with open(FONT_PATH, "wb") as f:
+                    f.write(response.content)
+        except Exception as e:
+            st.error(f"字體下載失敗：{e}")
+
+# 在應用程式啟動時確保字體已下載
+download_font()
 
 def create_pdf_report(history: list) -> bytes:
     """匯出閱讀紀錄 PDF 報告"""
@@ -253,8 +275,8 @@ def create_pdf_report(history: list) -> bytes:
 
     # 載入 Noto Sans TC 字型以支援中文
     try:
-        pdf.add_font("NotoSansTC", "", "NotoSansTC-Regular.ttf", uni=True)
-        use_font = "NotoSansTC"
+        pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
+        use_font = FONT_NAME
     except Exception as e:
         st.error(f"載入中文字型失敗：{e}，請確認字型檔案是否存在或路徑正確。")
         use_font = "Arial" # Fallback to Arial if Chinese font fails
@@ -287,8 +309,8 @@ def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes
 
     # 載入 Noto Sans TC 字型以支援中文
     try:
-        pdf.add_font("NotoSansTC", "", "NotoSansTC-Regular.ttf", uni=True)
-        use_font = "NotoSansTC"
+        pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
+        use_font = FONT_NAME
     except Exception as e:
         st.error(f"載入中文字型失敗：{e}，請確認字型檔案是否存在或路徑正確。")
         use_font = "Arial" # Fallback to Arial if Chinese font fails
