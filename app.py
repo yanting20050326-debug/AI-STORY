@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.rcParams["font.family"] = ["DejaVu Sans", "sans-serif"]
 import io
-import json
 import datetime
 import base64
 import requests
@@ -138,23 +137,13 @@ with st.sidebar:
     st.subheader("📚 閱讀設定")
     difficulty = st.selectbox("閱讀年齡層", ["3-4 歲 (幼童)", "5-6 歲 (大班)", "7-8 歲 (初小)"])
     generate_images = st.toggle("🎨 生成故事插圖", value=True)
-    num_illustrations = st.slider("插圖數量", 1, 4, 2)
+    num_illustrations = st.slider("插圖數量", 1, 4, 4)
+    auto_audio = st.toggle("🔊 自動生成語音朗讀", value=True)
 
 # ─────────────────────────────────────────────
 # 工具函式
 # ─────────────────────────────────────────────
-def split_into_paragraphs(text: str, n: int) -> list[str]:
-    sentences = [s.strip() for s in text.replace("。", "。\n").split("\n") if s.strip()]
-    if not sentences: return [text]
-    chunk_size = max(1, len(sentences) // n)
-    chunks = []
-    for i in range(0, len(sentences), chunk_size):
-        chunk = "".join(sentences[i : i + chunk_size])
-        if chunk: chunks.append(chunk)
-    return chunks[:n]
-
 def generate_story_with_groq(prompt: str, max_tokens: int = 1024) -> str:
-    """通用的 Groq LLM 呼叫函式"""
     headers = {"Authorization": f"Bearer {ENV_GROQ_KEY}", "Content-Type": "application/json"}
     payload = {"model": GROQ_MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": 0.7, "max_tokens": max_tokens}
     resp = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
@@ -163,7 +152,6 @@ def generate_story_with_groq(prompt: str, max_tokens: int = 1024) -> str:
     return resp.json()["choices"][0]["message"]["content"].strip()
 
 def generate_image_with_pollinations(english_action: str, style: str) -> bytes | None:
-    """將提取出的英文動作描述與指定的統一畫風結合成圖片"""
     prompt = (
         f"A children's picture book illustration in {style} style. "
         f"{english_action}. "
@@ -171,7 +159,6 @@ def generate_image_with_pollinations(english_action: str, style: str) -> bytes |
     )
     encoded_prompt = urllib.parse.quote(prompt)
     seed = random.randint(1, 999999) 
-    # nologo=true 可以移除部分浮水印
     image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?model=flux&width=1024&height=768&seed={seed}&nologo=true"
     
     try:
@@ -187,9 +174,9 @@ def generate_audio(text: str) -> bytes:
     fp.seek(0)
     return fp.read()
 
-# 字體下載
-FONT_URL = "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf"
-FONT_PATH = "NotoSansCJKtc-Regular.otf"
+# ⚠️ 更新為支援舊版 FPDF 的 TTF 字體來源
+FONT_URL = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
+FONT_PATH = "NotoSansTC-Regular.ttf"
 FONT_NAME = "NotoSansTC"
 
 @st.cache_resource
@@ -205,21 +192,29 @@ def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes
     pdf = FPDF()
     pdf.add_page()
     try:
-        pdf.add_font(FONT_NAME, fname=FONT_PATH)
+        # 強制指定 uni=True 以支援 UTF-8 中文字元
+        pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
         use_font = FONT_NAME
     except: 
         use_font = "Arial"
     
     pdf.set_font(use_font, size=22)
-    pdf.cell(0, 16, f"{character} 的專屬故事", ln=True, align="C")
+    # 如果字體載入失敗退回 Arial，為了防止崩潰，移除標題的中文字
+    safe_title = f"{character} 的專屬故事" if use_font != "Arial" else "Storybook"
+    pdf.cell(0, 16, safe_title, ln=True, align="C")
+    
     if image_bytes_list:
         try:
-            with open("/tmp/story_img_0.png", "wb") as f: f.write(image_bytes_list[0])
-            pdf.image("/tmp/story_img_0.png", x=30, w=150)
+            # 寫入暫存圖片供 PDF 讀取
+            img_path = "temp_pdf_image.png"
+            with open(img_path, "wb") as f: f.write(image_bytes_list[0])
+            pdf.image(img_path, x=30, w=150)
             pdf.ln(4)
         except: pass
+        
     pdf.set_font(use_font, size=12)
-    pdf.multi_cell(0, 8, text)
+    safe_text = text if use_font != "Arial" else "Font error: Could not load Chinese font. Please try again."
+    pdf.multi_cell(0, 8, safe_text)
     return bytes(pdf.output())
 
 # ─────────────────────────────────────────────
@@ -246,7 +241,7 @@ if st.session_state.page == "generator":
 
     with col_r:
         st.subheader("💡 使用提示")
-        st.info("輸入主角、場景與主題後，點擊生成，故事與動態插圖將同步呈現！支援一鍵產生語音朗讀。")
+        st.info("輸入主角、場景與主題後，點擊生成，故事與動態插圖將同步呈現！")
 
     if generate_btn:
         if not character or not scene: 
@@ -255,7 +250,7 @@ if st.session_state.page == "generator":
             with st.spinner("🔮 AI 正在為您創作故事與分鏡…"):
                 try:
                     # 1. 生成主線故事
-                    story_prompt = f"你是一位專為兒童寫作的繪本作家。請為「{difficulty}」的孩子創作一篇關於「{theme}」的故事。主角是「{character}」，故事發生在「{scene}」。請用生動有趣、符合該年齡層的詞彙，長度約 400 到 600 字。分成 4 個段落，不要加標題或編號。"
+                    story_prompt = f"你是一位專為兒童寫作的繪本作家。請為「{difficulty}」的孩子創作一篇關於「{theme}」的故事。主角是「{character}」，故事發生在「{scene}」。請用生動有趣、符合該年齡層的詞彙，長度約 400 到 600 字。分成 4 到 6 個段落，不要加標題或編號。"
                     story_text = generate_story_with_groq(story_prompt)
                     st.session_state.story_text = story_text
                     st.session_state.story_paragraphs = [p.strip() for p in story_text.split("\n\n") if p.strip()]
@@ -276,39 +271,55 @@ if st.session_state.page == "generator":
             # 2. 處理圖片與分鏡
             st.session_state.image_bytes = []
             if generate_images:
-                scenes_to_illustrate = split_into_paragraphs(st.session_state.story_text, num_illustrations)
-                prog = st.progress(0, text="🎨 正在規劃插圖分鏡…")
+                paragraphs = st.session_state.story_paragraphs
+                scenes_to_illustrate = []
                 
-                # 決定「這本書」的統一畫風
+                # 確保精準選出使用者指定的圖片數量 (1~4 張)
+                if paragraphs:
+                    for i in range(num_illustrations):
+                        idx = int(i * len(paragraphs) / num_illustrations)
+                        idx = min(idx, len(paragraphs) - 1)
+                        scenes_to_illustrate.append(paragraphs[idx])
+
+                prog = st.progress(0, text="🎨 正在規劃插圖分鏡…")
                 styles = ["soft watercolor", "colored pencil", "pastel drawing", "paper cut-out art", "oil painting", "3D Pixar animation"]
                 book_style = random.choice(styles)
                 
                 for idx, scene_paragraph in enumerate(scenes_to_illustrate):
                     prog.progress((idx) / len(scenes_to_illustrate), text=f"🎨 正在繪製插圖 {idx+1}/{len(scenes_to_illustrate)}...")
                     
-                    # 透過 LLM 將該段落翻譯為簡短的英文動作描述 (Action)
                     translation_prompt = (
                         f"Extract the main visual action from the following Chinese story paragraph and describe it in a concise English image prompt (maximum 20 words). "
                         f"The main character is '{character}'. The setting is '{scene}'. "
-                        f"Paragraph: {scene_paragraph}\n\n"
-                        f"Output ONLY the English description."
+                        f"Paragraph: {scene_paragraph}\n\nOutput ONLY the English description."
                     )
-                    
                     try:
                         english_action = generate_story_with_groq(translation_prompt, max_tokens=50)
                     except:
-                        english_action = f"The character {character} in {scene}" # 若翻譯失敗的備案
+                        english_action = f"The character {character} in {scene}"
                     
-                    # 生成該段落對應的圖片
                     img_data = generate_image_with_pollinations(english_action, book_style)
                     if img_data: 
                         st.session_state.image_bytes.append(img_data)
                         
                 prog.empty()
 
+            # 3. 全自動生成語音 (如果開關有打開)
+            if auto_audio:
+                with st.spinner("🎙️ 正在錄製 AI 語音導讀…"):
+                    try:
+                        st.session_state.audio_bytes = generate_audio(st.session_state.story_text)
+                    except Exception as e:
+                        st.error(f"語音生成失敗：{e}")
+
     if st.session_state.story_text:
         st.markdown("---")
         st.subheader("📚 你的專屬繪本")
+
+        # 顯示語音播放器
+        if st.session_state.audio_bytes:
+            st.success("🎵 語音導讀已為您準備好！")
+            st.audio(st.session_state.audio_bytes, format="audio/mp3", autoplay=True)
 
         meta = st.session_state.current_meta
         if meta:
@@ -324,8 +335,11 @@ if st.session_state.page == "generator":
         image_bytes_list = st.session_state.image_bytes
         img_idx = 0
 
+        # 將生成的圖片均勻分配到段落中顯示
+        img_spacing = max(1, len(paragraphs) // max(1, len(image_bytes_list))) if image_bytes_list else 1
+
         for i, para in enumerate(paragraphs):
-            if image_bytes_list and img_idx < len(image_bytes_list) and i % max(1, len(paragraphs) // len(image_bytes_list)) == 0:
+            if image_bytes_list and img_idx < len(image_bytes_list) and i % img_spacing == 0:
                 img_b64 = base64.b64encode(image_bytes_list[img_idx]).decode()
                 st.markdown(
                     f'<div class="ken-burns-container"><img src="data:image/png;base64,{img_b64}" class="ken-burns-img"></div>', 
@@ -334,6 +348,7 @@ if st.session_state.page == "generator":
                 img_idx += 1
             st.markdown(f'<div class="story-card">{para}</div>', unsafe_allow_html=True)
 
+        # 把剩餘圖片貼到最後面
         while img_idx < len(image_bytes_list):
             img_b64 = base64.b64encode(image_bytes_list[img_idx]).decode()
             st.markdown(
@@ -344,28 +359,17 @@ if st.session_state.page == "generator":
 
         st.markdown("---")
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         with c1:
             story_pdf = create_story_pdf(st.session_state.story_text, meta.get("character", "故事"), st.session_state.image_bytes)
             st.download_button("🖨️ 匯出故事 PDF", data=story_pdf, file_name=f"{meta.get('character','story')}_繪本.pdf", mime="application/pdf", use_container_width=True)
         with c2:
-            if st.button("🔊 產生並播放語音", use_container_width=True):
-                with st.spinner("🎙️ 正在產生語音，請稍候..."):
-                    try:
-                        st.session_state.audio_bytes = generate_audio(st.session_state.story_text)
-                    except Exception as e:
-                        st.error(f"語音生成失敗：{e}")
-        with c3:
             if st.button("🔄 重新生成", use_container_width=True):
                 st.session_state.story_text = ""
                 st.session_state.story_paragraphs = []
                 st.session_state.image_bytes = []
                 st.session_state.audio_bytes = None
                 st.rerun()
-
-        if st.session_state.audio_bytes:
-            st.success("🎵 語音已準備就緒！")
-            st.audio(st.session_state.audio_bytes, format="audio/mp3", autoplay=True)
 
 # ─────────────────────────────────────────────
 # 頁面：家長儀表板
