@@ -1,7 +1,6 @@
 import os
 import streamlit as st
 import streamlit.components.v1 as components
-from fpdf import FPDF
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.rcParams["font.family"] = ["DejaVu Sans", "sans-serif"]
@@ -179,56 +178,6 @@ def generate_audio(text: str) -> bytes:
     fp.seek(0)
     return fp.read()
 
-# ==========================================
-# 🛑 終極版字體設定 (完全拔除網路下載)
-# ==========================================
-# 使用 os.path 確保指向 app.py 所在的同一個資料夾
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FONT_PATH = os.path.join(BASE_DIR, "NotoSansTC-VariableFont_wght.ttf")
-FONT_NAME = "NotoSansTC"
-
-def create_story_pdf(text: str, character: str, image_bytes_list: list) -> bytes:
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # 檢查你的字體檔案有沒有確實被放進來
-    if not os.path.exists(FONT_PATH):
-        st.error(f"❌ 找不到字體檔案：{FONT_PATH}。請確認你有把 `NotoSansTC-VariableFont_wght.ttf` 跟 app.py 放在一起並推送到 GitHub！")
-        use_font = "Arial"
-    else:
-        try:
-            try:
-                pdf.add_font(FONT_NAME, fname=FONT_PATH)
-            except TypeError:
-                pdf.add_font(FONT_NAME, "", FONT_PATH, uni=True)
-            use_font = FONT_NAME
-        except Exception as e:
-            st.error(f"❌ 字體解析失敗 (可能是舊版 fpdf 不支援 Variable Font): {e}")
-            use_font = "Arial"
-    
-    pdf.set_font(use_font, size=22)
-    safe_title = f"{character} 的專屬故事" if use_font != "Arial" else "Storybook"
-    pdf.cell(0, 16, safe_title, ln=True, align="C")
-    
-    if image_bytes_list:
-        try:
-            img_path = os.path.join(BASE_DIR, "temp_pdf_image.png")
-            with open(img_path, "wb") as f: f.write(image_bytes_list[0])
-            pdf.image(img_path, x=30, w=150)
-            pdf.ln(4)
-        except: pass
-        
-    pdf.set_font(use_font, size=12)
-    safe_text = text if use_font != "Arial" else "Error: Please upload the NotoSansTC-VariableFont_wght.ttf file to your GitHub repository."
-    pdf.multi_cell(0, 8, safe_text)
-    
-    try:
-        res = pdf.output()
-        return bytes(res) if type(res) in (bytes, bytearray) else res.encode('latin-1')
-    except TypeError:
-        res = pdf.output(dest="S")
-        return res.encode('latin-1') if isinstance(res, str) else bytes(res)
-
 # ─────────────────────────────────────────────
 # 頁面：故事生成器
 # ─────────────────────────────────────────────
@@ -376,17 +325,13 @@ if st.session_state.page == "generator":
 
         st.markdown("---")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            story_pdf = create_story_pdf(st.session_state.story_text, meta.get("character", "故事"), st.session_state.image_bytes)
-            st.download_button("🖨️ 匯出故事 PDF", data=story_pdf, file_name=f"{meta.get('character','story')}_繪本.pdf", mime="application/pdf", use_container_width=True)
-        with c2:
-            if st.button("🔄 重新生成", use_container_width=True):
-                st.session_state.story_text = ""
-                st.session_state.story_paragraphs = []
-                st.session_state.image_bytes = []
-                st.session_state.audio_bytes = None
-                st.rerun()
+        # 移除 PDF 下載，只保留重新生成按鈕
+        if st.button("🔄 重新生成", use_container_width=True):
+            st.session_state.story_text = ""
+            st.session_state.story_paragraphs = []
+            st.session_state.image_bytes = []
+            st.session_state.audio_bytes = None
+            st.rerun()
 
 # ─────────────────────────────────────────────
 # 頁面：家長儀表板
@@ -437,14 +382,7 @@ elif st.session_state.page == "dashboard":
             st.markdown(f'<div class="story-card">{item["text"]}</div>', unsafe_allow_html=True)
 
     st.markdown("---")
-    report_pdf = create_story_pdf("這是一份歷史紀錄總覽 (開發中)", "閱讀報告", [])
-    st.download_button(
-        "⬇️ 下載 PDF 學習報告",
-        data=report_pdf,
-        file_name=f"閱讀報告_{datetime.datetime.now().strftime('%Y%m%d')}.pdf",
-        mime="application/pdf",
-    )
-
+    
     if st.button("🗑️ 清除所有閱讀紀錄", type="secondary"):
         st.session_state.history = []
         st.session_state.story_text = ""
