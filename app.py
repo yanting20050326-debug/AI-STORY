@@ -230,11 +230,11 @@ def generate_hf_image(hf_key: str, scene_desc: str, character: str, scene: str) 
         elif resp.status_code == 503:
             st.warning("⏳ Hugging Face 模型載入中，請稍後再試（約 20-30 秒）。")
         elif resp.status_code == 401:
-            st.warning("❌ Hugging Face API Token 無效或未提供。請檢查您的 Token。")
+            st.warning(f"❌ Hugging Face API Token 無效或未提供。請檢查您的 Token。原始錯誤：{resp.text[:300]}")
         elif resp.status_code == 404:
             st.warning(f"❌ Hugging Face 模型 {HF_IMAGE_MODEL} 未找到。請確認模型名稱或路徑。")
         else:
-            st.warning(f"插圖生成失敗（HTTP {resp.status_code}）：{resp.text[:200]}")
+            st.warning(f"插圖生成失敗（HTTP {resp.status_code}）。原始錯誤：{resp.text[:300]}")
         return None
     except requests.exceptions.Timeout:
         st.warning("⏳ Hugging Face API 請求超時。請稍後再試。")
