@@ -1,9 +1,6 @@
 import os
 import streamlit as st
 import streamlit.components.v1 as components
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.rcParams["font.family"] = ["DejaVu Sans", "sans-serif"]
 import io
 import datetime
 import base64
@@ -21,17 +18,18 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile" 
 
 # ─────────────────────────────────────────────
-# 基本設定 & 深色主題 CSS
+# 基本設定 & 強化深色主題 CSS
 # ─────────────────────────────────────────────
 st.set_page_config(
     page_title="AI 動態繪本生成器",
     page_icon="📖",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto", 
 )
 
 st.markdown("""
 <style>
+    /* 強制全面深色模式 */
     :root {
         --primary: #B39DDB;
         --accent:  #FFD54F;
@@ -39,16 +37,25 @@ st.markdown("""
         --bg-card: #1E1E2E;
         --text:    #E0E0E0;
     }
-    html, body, [data-testid="stAppViewContainer"] {
-        background: var(--bg-main) !important;
+    
+    .stApp {
+        background-color: var(--bg-main) !important;
         color: var(--text) !important;
     }
     [data-testid="stSidebar"] {
-        background: #181818 !important;
+        background-color: #181818 !important;
+        border-right: 1px solid #2A2A3A;
     }
-    h1, h2, h3, h4 { color: var(--primary) !important; }
-    p, span, div { color: var(--text) !important; }
+    h1, h2, h3, h4, h5, p, span, div, label { 
+        color: var(--text) !important; 
+    }
+    h1, h2, h3 { color: var(--primary) !important; }
     
+    .stTextInput>div>div>input, .stSelectbox>div>div>div {
+        background-color: #2A2A3A !important;
+        color: white !important;
+    }
+
     .story-card {
         background: var(--bg-card);
         border-radius: 16px;
@@ -56,32 +63,74 @@ st.markdown("""
         box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         margin-bottom: 20px;
         line-height: 1.9;
-        font-size: 1.08rem;
-        color: var(--text);
+        font-size: 1.1rem;
         border: 1px solid #2A2A3A;
     }
     .badge {
         display: inline-block;
         background: #312B47;
-        color: var(--primary);
+        color: var(--primary) !important;
         border-radius: 20px;
         padding: 3px 12px;
-        font-size: 0.82rem;
+        font-size: 0.85rem;
         font-weight: 600;
         margin: 2px 3px;
         border: 1px solid var(--primary);
     }
-    .metric-box {
-        background: var(--bg-card);
-        border-radius: 12px;
-        padding: 16px 20px;
-        text-align: center;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-        border: 1px solid #2A2A3A;
-    }
-    .metric-num { font-size: 2.2rem; font-weight: 700; color: var(--accent); }
-    .metric-label { font-size: 0.85rem; color: #A0A0A0; }
     
+    /* Slogan 動態文字特效 */
+    .animated-slogan {
+        font-size: 1.3rem;
+        font-weight: 700;
+        background: linear-gradient(270deg, #FFD54F, #B39DDB, #FFD54F);
+        background-size: 200% auto;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: floatAndShine 3s ease-in-out infinite;
+        margin-bottom: 1.5rem;
+        display: inline-block;
+    }
+    @keyframes floatAndShine {
+        0% { background-position: 0% 50%; transform: translateY(0px); }
+        50% { background-position: 100% 50%; transform: translateY(-4px); }
+        100% { background-position: 0% 50%; transform: translateY(0px); }
+    }
+    
+    /* ✨ 新增：純 CSS 魔法書動態貼圖特效 ✨ */
+    .sticker-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 180px;
+        margin-top: 20px;
+        position: relative;
+    }
+    .magic-book {
+        font-size: 80px;
+        animation: float-book 4s ease-in-out infinite;
+        filter: drop-shadow(0 0 25px rgba(179, 157, 219, 0.7));
+        z-index: 2;
+    }
+    .sparkle {
+        position: absolute;
+        animation: twinkle 2s ease-in-out infinite;
+    }
+    .sp-1 { top: 15px; left: 25%; font-size: 24px; animation-delay: 0s; }
+    .sp-2 { top: 45px; right: 25%; font-size: 32px; animation-delay: 0.5s; }
+    .sp-3 { bottom: 35px; left: 30%; font-size: 20px; animation-delay: 1.2s; }
+    .sp-4 { bottom: 50px; right: 35%; font-size: 26px; animation-delay: 1.8s; }
+    
+    @keyframes float-book {
+        0% { transform: translateY(0px) rotate(-3deg); }
+        50% { transform: translateY(-18px) rotate(4deg); }
+        100% { transform: translateY(0px) rotate(-3deg); }
+    }
+    @keyframes twinkle {
+        0%, 100% { opacity: 0.2; transform: scale(0.7) rotate(0deg); filter: drop-shadow(0 0 5px #FFD54F); }
+        50% { opacity: 1; transform: scale(1.3) rotate(20deg); filter: drop-shadow(0 0 15px #FFD54F); }
+    }
+    
+    /* 動態運鏡特效 */
     .ken-burns-container {
         overflow: hidden;
         border-radius: 16px;
@@ -137,7 +186,7 @@ with st.sidebar:
     st.subheader("📚 視覺設定")
     difficulty = st.selectbox("閱讀年齡層", ["3-4 歲 (幼童)", "5-6 歲 (大班)", "7-8 歲 (初小)"])
     generate_images = st.toggle("🎨 生成故事插圖", value=True)
-    num_illustrations = st.slider("插圖數量", 1, 4, 4)
+    num_illustrations = st.selectbox("插圖數量", [1, 2, 3, 4], index=3)
     
     st.markdown("---")
     st.subheader("🔊 語音設定")
@@ -178,13 +227,72 @@ def generate_audio(text: str) -> bytes:
     fp.seek(0)
     return fp.read()
 
+def create_html_story(character: str, story_paragraphs: list, image_bytes_list: list) -> bytes:
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="zh-Hant">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{character} 的專屬繪本</title>
+        <style>
+            body {{
+                font-family: 'Helvetica Neue', Helvetica, Arial, 'Microsoft JhengHei', sans-serif;
+                background-color: #121212;
+                color: #E0E0E0;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            h1 {{ color: #B39DDB; text-align: center; margin-bottom: 40px; font-size: 2.5em; }}
+            .page {{ margin-bottom: 50px; text-align: center; }}
+            img {{
+                max-width: 100%;
+                border-radius: 16px;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+                margin-bottom: 20px;
+            }}
+            p {{
+                font-size: 1.3rem;
+                line-height: 1.9;
+                text-align: left;
+                padding: 25px;
+                background: #1E1E2E;
+                border-radius: 16px;
+                border: 1px solid #2A2A3A;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>📖 {character} 的專屬繪本</h1>
+    """
+    
+    img_idx = 0
+    img_spacing = max(1, len(story_paragraphs) // max(1, len(image_bytes_list))) if image_bytes_list else 1
+
+    for i, para in enumerate(story_paragraphs):
+        html += "<div class='page'>"
+        if image_bytes_list and img_idx < len(image_bytes_list) and i % img_spacing == 0:
+            img_b64 = base64.b64encode(image_bytes_list[img_idx]).decode()
+            html += f"<img src='data:image/png;base64,{img_b64}'>"
+            img_idx += 1
+        html += f"<p>{para}</p></div>"
+
+    while img_idx < len(image_bytes_list):
+        img_b64 = base64.b64encode(image_bytes_list[img_idx]).decode()
+        html += f"<div class='page'><img src='data:image/png;base64,{img_b64}'></div>"
+        img_idx += 1
+
+    html += "</body></html>"
+    return html.encode('utf-8')
+
 # ─────────────────────────────────────────────
 # 頁面：故事生成器
 # ─────────────────────────────────────────────
 if st.session_state.page == "generator":
 
     st.title("📖 AI 動態繪本生成器")
-    st.markdown("##### 結合視覺特效與語音，打造沉浸式閱讀體驗。")
+    st.markdown('<div class="animated-slogan">✨ 無須註冊，無次數限制，快樂學習 ✨</div>', unsafe_allow_html=True)
     st.markdown("---")
 
     if not ENV_GROQ_KEY:
@@ -197,16 +305,35 @@ if st.session_state.page == "generator":
         st.subheader("🎭 故事設定")
         character = st.text_input("主角叫什麼名字？", placeholder="例如：小紅帽、大野狼、小鱷魚…")
         scene = st.text_input("故事在哪裡發生？", placeholder="例如：魔法森林、海底世界…")
-        theme = st.selectbox("今天想聽什麼主題？", ["友情", "勇氣", "冒險", "親情", "分享", "探索"])
+        
+        theme_options = ["友情", "勇氣", "冒險", "親情", "分享", "探索", "自訂..."]
+        selected_theme = st.selectbox("今天想聽什麼主題？", theme_options)
+        
+        if selected_theme == "自訂...":
+            theme = st.text_input("✏️ 請輸入你想自訂的主題：", placeholder="例如：萬聖節派對、認識恐龍...")
+        else:
+            theme = selected_theme
+            
         generate_btn = st.button("✨ 開始生成專屬繪本", use_container_width=True, type="primary")
 
     with col_r:
         st.subheader("💡 使用提示")
-        st.info("輸入主角、場景與主題後，點擊生成，故事與動態插圖將同步呈現！")
+        st.info("輸入主角、場景與主題後，點擊生成，故事與動態插圖將同步呈現！生成完畢後可以將獨一無二的繪本下載珍藏。")
+        
+        # 🌟 載入專屬的 CSS 動態貼圖
+        st.markdown("""
+        <div class="sticker-container">
+            <div class="sparkle sp-1">✨</div>
+            <div class="sparkle sp-2">🌟</div>
+            <div class="sparkle sp-3">✨</div>
+            <div class="sparkle sp-4">💫</div>
+            <div class="magic-book">📖</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     if generate_btn:
-        if not character or not scene: 
-            st.warning("請填寫主角與場景！")
+        if not character or not scene or not theme: 
+            st.warning("請完整填寫主角、場景與主題！")
         else:
             with st.spinner("🔮 AI 正在為您創作故事與分鏡…"):
                 try:
@@ -325,13 +452,23 @@ if st.session_state.page == "generator":
 
         st.markdown("---")
 
-        # 移除 PDF 下載，只保留重新生成按鈕
-        if st.button("🔄 重新生成", use_container_width=True):
-            st.session_state.story_text = ""
-            st.session_state.story_paragraphs = []
-            st.session_state.image_bytes = []
-            st.session_state.audio_bytes = None
-            st.rerun()
+        c1, c2 = st.columns(2)
+        with c1:
+            html_content = create_html_story(meta.get("character", "故事"), st.session_state.story_paragraphs, st.session_state.image_bytes)
+            st.download_button(
+                label="📥 下載專屬繪本 (HTML檔)", 
+                data=html_content, 
+                file_name=f"{meta.get('character','story')}_繪本.html", 
+                mime="text/html", 
+                use_container_width=True
+            )
+        with c2:
+            if st.button("🔄 重新生成", use_container_width=True):
+                st.session_state.story_text = ""
+                st.session_state.story_paragraphs = []
+                st.session_state.image_bytes = []
+                st.session_state.audio_bytes = None
+                st.rerun()
 
 # ─────────────────────────────────────────────
 # 頁面：家長儀表板
